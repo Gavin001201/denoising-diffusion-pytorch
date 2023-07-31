@@ -17,6 +17,8 @@ AttentionConfig = namedtuple('AttentionConfig', ['enable_flash', 'enable_math', 
 def exists(val):
     return val is not None
 
+# 定义了一个装饰器函数 once，它接受一个函数 fn 作为输入，并返回一个新的函数 inner，
+# 新函数 inner 的功能是限制被装饰函数 fn 只能被调用一次，之后再调用时将不会有任何操作。
 def once(fn):
     called = False
     @wraps(fn)

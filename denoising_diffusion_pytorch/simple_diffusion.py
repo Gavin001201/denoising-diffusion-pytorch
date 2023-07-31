@@ -23,24 +23,24 @@ def identity(t):
 def is_lambda(f):
     return callable(f) and f.__name__ == "<lambda>"
 
-def default(val, d):
+def default(val, d):            # 若没有指定val，则返回d
     if exists(val):
         return val
     return d() if is_lambda(d) else d
 
-def cast_tuple(t, l = 1):
+def cast_tuple(t, l = 1):       # 将输入转换成元组
     return ((t,) * l) if not isinstance(t, tuple) else t
 
-def append_dims(t, dims):
+def append_dims(t, dims):       # 在张量的末尾添加指定数量的维度:shape + dims
     shape = t.shape
     return t.reshape(*shape, *((1,) * dims))
 
-def l2norm(t):
+def l2norm(t):                  # 在最后一维归一化
     return F.normalize(t, dim = -1)
 
 # u-vit related functions and modules
 
-class Upsample(nn.Module):
+class Upsample(nn.Module):      # 上采样
     def __init__(
         self,
         dim,
@@ -57,12 +57,12 @@ class Upsample(nn.Module):
         self.net = nn.Sequential(
             conv,
             nn.SiLU(),
-            nn.PixelShuffle(factor)
+            nn.PixelShuffle(factor)     # 将一张图片的像素重新排列，使得图片的分辨率改变
         )
 
         self.init_conv_(conv)
 
-    def init_conv_(self, conv):
+    def init_conv_(self, conv):         # 卷积层权重初始化
         o, i, h, w = conv.weight.shape
         conv_weight = torch.empty(o // self.factor_squared, i, h, w)
         nn.init.kaiming_uniform_(conv_weight)
@@ -74,7 +74,7 @@ class Upsample(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-def Downsample(
+def Downsample(     # 下采样，减小高宽，将每个 p1*p2 的块重组为一个通道，1d卷积降低通道数
     dim,
     dim_out = None,
     factor = 2
@@ -85,6 +85,9 @@ def Downsample(
     )
 
 class RMSNorm(nn.Module):
+    '''
+    RMSNorm 归一化是一种对神经网络激活函数输出进行归一化的方法，能够在提高模型精度的同时，提高模型的泛化性能
+    '''
     def __init__(self, dim, scale = True, normalize_dim = 2):
         super().__init__()
         self.g = nn.Parameter(torch.ones(dim)) if scale else 1
@@ -111,11 +114,11 @@ class LearnedSinusoidalPosEmb(nn.Module):
         freqs = x * rearrange(self.weights, 'd -> 1 d') * 2 * math.pi
         fouriered = torch.cat((freqs.sin(), freqs.cos()), dim = -1)
         fouriered = torch.cat((x, fouriered), dim = -1)
-        return fouriered
+        return fouriered    # [b, 2d+1]?
 
 # building block modules
 
-class Block(nn.Module):
+class Block(nn.Module):     # 单层卷积层 + 组归一化 + 激活函数, (dim --> dim_out)
     def __init__(self, dim, dim_out, groups = 8):
         super().__init__()
         self.proj = nn.Conv2d(dim, dim_out, 3, padding = 1)
@@ -133,7 +136,7 @@ class Block(nn.Module):
         x = self.act(x)
         return x
 
-class ResnetBlock(nn.Module):
+class ResnetBlock(nn.Module):       # 卷积前向 + 残差(dim --> dim_out)
     def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8):
         super().__init__()
         self.mlp = nn.Sequential(
@@ -159,7 +162,7 @@ class ResnetBlock(nn.Module):
 
         return h + self.res_conv(x)
 
-class LinearAttention(nn.Module):
+class LinearAttention(nn.Module):       # 利用卷积做了个注意力层，加上残差网络
     def __init__(self, dim, heads = 4, dim_head = 32):
         super().__init__()
         self.scale = dim_head ** -0.5
@@ -196,7 +199,7 @@ class LinearAttention(nn.Module):
 
         return self.to_out(out) + residual
 
-class Attention(nn.Module):
+class Attention(nn.Module):     # # 利用卷积做了个注意力层
     def __init__(self, dim, heads = 4, dim_head = 32, scale = 8, dropout = 0.):
         super().__init__()
         self.scale = scale
@@ -234,7 +237,7 @@ class Attention(nn.Module):
         out = rearrange(out, 'b h n d -> b n (h d)')
         return self.to_out(out)
 
-class FeedForward(nn.Module):
+class FeedForward(nn.Module):       # 前馈层（线性层为主）
     def __init__(
         self,
         dim,
@@ -250,7 +253,7 @@ class FeedForward(nn.Module):
             nn.SiLU(),
             nn.Linear(cond_dim, dim_hidden * 2),
             Rearrange('b d -> b 1 d')
-        )
+        )           # 用于将条件信息t映射成一个缩放因子和平移因子
 
         to_scale_shift_linear = self.to_scale_shift[-2]
         nn.init.zeros_(to_scale_shift_linear.weight)
@@ -330,6 +333,7 @@ class UViT(nn.Module):
 
         # for initial dwt transform (or whatever transform researcher wants to try here)
 
+        # 检查初始转换函数和最终转换函数是否能正确处理输入数据
         if exists(init_img_transform) and exists(final_img_itransform):
             init_shape = torch.Size(1, 1, 32, 32)
             mock_tensor = torch.randn(init_shape)
@@ -341,6 +345,7 @@ class UViT(nn.Module):
         input_channels = channels
 
         init_dim = default(init_dim, dim)
+        # 对输入数据进行卷积处理，将其转换为特征图
         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
 
         # whether to do initial patching, as alternative to dwt
@@ -369,7 +374,7 @@ class UViT(nn.Module):
         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
 
-        resnet_block = partial(ResnetBlock, groups = resnet_block_groups)
+        resnet_block = partial(ResnetBlock, groups = resnet_block_groups)   # 使用一个已有的函数并为其部分参数赋值，从而创建一个新的函数
 
         # time embeddings
 
@@ -435,12 +440,12 @@ class UViT(nn.Module):
         self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
 
     def forward(self, x, time):
-        x = self.init_img_transform(x)
+        x = self.init_img_transform(x)      # 初始的图像变换
 
-        x = self.init_conv(x)
+        x = self.init_conv(x)               # 拿到特征图
         r = x.clone()
 
-        t = self.time_mlp(time)
+        t = self.time_mlp(time)             # 时间步嵌入
 
         h = []
 
@@ -482,15 +487,15 @@ class UViT(nn.Module):
 
 # normalization functions
 
-def normalize_to_neg_one_to_one(img):
+def normalize_to_neg_one_to_one(img):       # 转换到[-1, 1]
     return img * 2 - 1
 
-def unnormalize_to_zero_to_one(t):
+def unnormalize_to_zero_to_one(t):          # 转换到[0, 1]
     return (t + 1) * 0.5
 
 # diffusion helpers
 
-def right_pad_dims_to(x, t):
+def right_pad_dims_to(x, t):                # 将 t 的维度填充至与 x 相同
     padding_dims = x.ndim - t.ndim
     if padding_dims <= 0:
         return t
@@ -499,11 +504,11 @@ def right_pad_dims_to(x, t):
 # logsnr schedules and shifting / interpolating decorators
 # only cosine for now
 
-def log(t, eps = 1e-20):
+def log(t, eps = 1e-20):        # 对数运算（限制最小值）
     return torch.log(t.clamp(min = eps))
 
-def logsnr_schedule_cosine(t, logsnr_min = -15, logsnr_max = 15):
-    t_min = math.atan(math.exp(-0.5 * logsnr_max))
+def logsnr_schedule_cosine(t, logsnr_min = -15, logsnr_max = 15):   # noise_schedule
+    t_min = math.atan(math.exp(-0.5 * logsnr_max))  # math.atan：返回 x 的反正切值
     t_max = math.atan(math.exp(-0.5 * logsnr_min))
     return -2 * log(torch.tan(t_min + t * (t_max - t_min)))
 
@@ -592,7 +597,7 @@ class GaussianDiffusion(nn.Module):
 
     def p_mean_variance(self, x, time, time_next):
 
-        log_snr = self.log_snr(time)
+        log_snr = self.log_snr(time)    # noise_schedule
         log_snr_next = self.log_snr(time_next)
         c = -expm1(log_snr - log_snr_next)
 

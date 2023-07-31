@@ -44,26 +44,26 @@ def default(val, d):
         return val
     return d() if callable(d) else d
 
-def cast_tuple(t, length = 1):
+def cast_tuple(t, length = 1):      # 将输入转换成元组
     if isinstance(t, tuple):
         return t
     return ((t,) * length)
 
-def divisible_by(numer, denom):
+def divisible_by(numer, denom):     # 判断能否被整除
     return (numer % denom) == 0
 
 def identity(t, *args, **kwargs):
     return t
 
-def cycle(dl):
+def cycle(dl):      # 生成器函数，从数据加载器中加载一个批次的数据，并返回这些数据，无限循环，直到手动停止
     while True:
         for data in dl:
             yield data
 
-def has_int_squareroot(num):
+def has_int_squareroot(num):        # 判断是否有整数平方根
     return (math.sqrt(num) ** 2) == num
 
-def num_to_groups(num, divisor):
+def num_to_groups(num, divisor):    # 将num分组，返回列表，两个元素分别为组数与余数
     groups = num // divisor
     remainder = num % divisor
     arr = [divisor] * groups
@@ -71,28 +71,28 @@ def num_to_groups(num, divisor):
         arr.append(remainder)
     return arr
 
-def convert_image_to_fn(img_type, image):
+def convert_image_to_fn(img_type, image):   # 将图像转换为特定模式
     if image.mode != img_type:
         return image.convert(img_type)
     return image
 
 # normalization functions
 
-def normalize_to_neg_one_to_one(img):
+def normalize_to_neg_one_to_one(img):       # 将像素值转换为[-1, 1]
     return img * 2 - 1
 
-def unnormalize_to_zero_to_one(t):
+def unnormalize_to_zero_to_one(t):          # 将像素值转换为[0, 1]
     return (t + 1) * 0.5
 
 # small helper modules
 
-def Upsample(dim, dim_out = None):
+def Upsample(dim, dim_out = None):          # 上采样两倍
     return nn.Sequential(
         nn.Upsample(scale_factor = 2, mode = 'nearest'),
         nn.Conv2d(dim, default(dim_out, dim), 3, padding = 1)
     )
 
-def Downsample(dim, dim_out = None):
+def Downsample(dim, dim_out = None):        # 下采样2倍，以维度调整实现
     return nn.Sequential(
         Rearrange('b c (h p1) (w p2) -> b (c p1 p2) h w', p1 = 2, p2 = 2),
         nn.Conv2d(dim * 4, default(dim_out, dim), 1)
@@ -108,15 +108,15 @@ class RMSNorm(nn.Module):
 
 # sinusoidal positional embeds
 
-class SinusoidalPosEmb(nn.Module):
-    def __init__(self, dim):
+class SinusoidalPosEmb(nn.Module):      # 位置嵌入
+    def __init__(self, dim):            # dim: 64
         super().__init__()
         self.dim = dim
 
     def forward(self, x):
         device = x.device
         half_dim = self.dim // 2
-        emb = math.log(10000) / (half_dim - 1)
+        emb = math.log(10000) / (half_dim - 1)      # 底数为e
         emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
         emb = x[:, None] * emb[None, :]
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
@@ -141,7 +141,7 @@ class RandomOrLearnedSinusoidalPosEmb(nn.Module):
 
 # building block modules
 
-class Block(nn.Module):
+class Block(nn.Module):     # 卷积（只改变通道数）+ 归一化 + 激活函数（dim --> dim_out）
     def __init__(self, dim, dim_out, groups = 8):
         super().__init__()
         self.proj = nn.Conv2d(dim, dim_out, 3, padding = 1)
@@ -159,7 +159,7 @@ class Block(nn.Module):
         x = self.act(x)
         return x
 
-class ResnetBlock(nn.Module):
+class ResnetBlock(nn.Module):   # 残差块（dim --> dim_out）
     def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8):
         super().__init__()
         self.mlp = nn.Sequential(
@@ -185,7 +185,7 @@ class ResnetBlock(nn.Module):
 
         return h + self.res_conv(x)
 
-class LinearAttention(nn.Module):
+class LinearAttention(nn.Module):       # 卷积层实现的注意力层
     def __init__(
         self,
         dim,
@@ -224,7 +224,7 @@ class LinearAttention(nn.Module):
         out = rearrange(out, 'b h c (x y) -> b (h c) x y', h = self.heads, x = h, y = w)
         return self.to_out(out)
 
-class Attention(nn.Module):
+class Attention(nn.Module):         # 卷积层实现的注意力层，flash_attn实现点积注意力
     def __init__(
         self,
         dim,
@@ -260,7 +260,7 @@ class Attention(nn.Module):
 class Unet(nn.Module):
     def __init__(
         self,
-        dim,
+        dim,    # 64
         init_dim = None,
         out_dim = None,
         dim_mults = (1, 2, 4, 8),
@@ -280,21 +280,21 @@ class Unet(nn.Module):
 
         # determine dimensions
 
-        self.channels = channels
+        self.channels = channels        # 3
         self.self_condition = self_condition
-        input_channels = channels * (2 if self_condition else 1)
+        input_channels = channels * (2 if self_condition else 1)    # 3
 
-        init_dim = default(init_dim, dim)
+        init_dim = default(init_dim, dim)   # 64
         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
 
-        dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
+        dims = [init_dim, *map(lambda m: dim * m, dim_mults)]   # [64, 64*[1, 2, 4, 8]]
         in_out = list(zip(dims[:-1], dims[1:]))
 
         block_klass = partial(ResnetBlock, groups = resnet_block_groups)
 
-        # time embeddings
+        # time embeddings, 时间步嵌入
 
-        time_dim = dim * 4
+        time_dim = dim * 4      # 256
 
         self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
 
@@ -303,21 +303,21 @@ class Unet(nn.Module):
             fourier_dim = learned_sinusoidal_dim + 1
         else:
             sinu_pos_emb = SinusoidalPosEmb(dim)
-            fourier_dim = dim
+            fourier_dim = dim       # 64
 
         self.time_mlp = nn.Sequential(
             sinu_pos_emb,
             nn.Linear(fourier_dim, time_dim),
             nn.GELU(),
-            nn.Linear(time_dim, time_dim)
+            nn.Linear(time_dim, time_dim)   # time_dim: 256
         )
 
         # attention
 
-        num_stages = len(dim_mults)
-        full_attn  = cast_tuple(full_attn, num_stages)
-        attn_heads = cast_tuple(attn_heads, num_stages)
-        attn_dim_head = cast_tuple(attn_dim_head, num_stages)
+        num_stages = len(dim_mults)     # (1, 2, 4, 8)
+        full_attn  = cast_tuple(full_attn, num_stages)      # (False, False, False, True)
+        attn_heads = cast_tuple(attn_heads, num_stages)     # (4, 4, 4, 4)
+        attn_dim_head = cast_tuple(attn_dim_head, num_stages)   # (32, 32, 32, 32)
 
         assert len(full_attn) == len(dim_mults)
 
@@ -327,7 +327,7 @@ class Unet(nn.Module):
 
         self.downs = nn.ModuleList([])
         self.ups = nn.ModuleList([])
-        num_resolutions = len(in_out)
+        num_resolutions = len(in_out)   # 4
 
         for ind, ((dim_in, dim_out), layer_full_attn, layer_attn_heads, layer_attn_dim_head) in enumerate(zip(in_out, full_attn, attn_heads, attn_dim_head)):
             is_last = ind >= (num_resolutions - 1)
@@ -341,7 +341,7 @@ class Unet(nn.Module):
                 Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(dim_in, dim_out, 3, padding = 1)
             ]))
 
-        mid_dim = dims[-1]
+        mid_dim = dims[-1]      # 512
         self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim)
         self.mid_attn = FullAttention(mid_dim, heads = attn_heads[-1], dim_head = attn_dim_head[-1])
         self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim)
@@ -358,8 +358,8 @@ class Unet(nn.Module):
                 Upsample(dim_out, dim_in) if not is_last else  nn.Conv2d(dim_out, dim_in, 3, padding = 1)
             ]))
 
-        default_out_dim = channels * (1 if not learned_variance else 2)
-        self.out_dim = default(out_dim, default_out_dim)
+        default_out_dim = channels * (1 if not learned_variance else 2)     # 3
+        self.out_dim = default(out_dim, default_out_dim)            # 3
 
         self.final_res_block = block_klass(dim * 2, dim, time_emb_dim = time_dim)
         self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
@@ -378,7 +378,7 @@ class Unet(nn.Module):
         x = self.init_conv(x)
         r = x.clone()
 
-        t = self.time_mlp(time)
+        t = self.time_mlp(time)     # [8, 256]
 
         h = []
 
@@ -413,7 +413,7 @@ class Unet(nn.Module):
 
 # gaussian diffusion trainer class
 
-def extract(a, t, x_shape):
+def extract(a, t, x_shape):     # 提取输入a的最后一维中索引为t处的值
     b, *_ = t.shape
     out = a.gather(-1, t)
     return out.reshape(b, *((1,) * (len(x_shape) - 1)))
@@ -477,16 +477,16 @@ class GaussianDiffusion(nn.Module):
 
         self.model = model
 
-        self.channels = self.model.channels
-        self.self_condition = self.model.self_condition
+        self.channels = self.model.channels     # 3
+        self.self_condition = self.model.self_condition # False
 
         self.image_size = image_size
 
-        self.objective = objective
+        self.objective = objective      # 'pred_v'
 
         assert objective in {'pred_noise', 'pred_x0', 'pred_v'}, 'objective must be either pred_noise (predict noise) or pred_x0 (predict image start) or pred_v (predict v [v-parameterization as defined in appendix D of progressive distillation paper, used in imagen-video successfully])'
 
-        if beta_schedule == 'linear':
+        if beta_schedule == 'linear':       # 'sigmoid'
             beta_schedule_fn = linear_beta_schedule
         elif beta_schedule == 'cosine':
             beta_schedule_fn = cosine_beta_schedule
@@ -495,7 +495,7 @@ class GaussianDiffusion(nn.Module):
         else:
             raise ValueError(f'unknown beta schedule {beta_schedule}')
 
-        betas = beta_schedule_fn(timesteps, **schedule_fn_kwargs)
+        betas = beta_schedule_fn(timesteps, **schedule_fn_kwargs)   # 递增
 
         alphas = 1. - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
@@ -544,10 +544,10 @@ class GaussianDiffusion(nn.Module):
 
         # offset noise strength - in blogpost, they claimed 0.1 was ideal
 
-        self.offset_noise_strength = offset_noise_strength
+        self.offset_noise_strength = offset_noise_strength      # 0
 
         # derive loss weight
-        # snr - signal noise ratio
+        # snr - signal noise ratio  snr值越高，则表示当前生成的数据中信号的比重越大，噪声的干扰越小，生成的数据质量也就越好
 
         snr = alphas_cumprod / (1 - alphas_cumprod)
 
@@ -570,7 +570,7 @@ class GaussianDiffusion(nn.Module):
         self.unnormalize = unnormalize_to_zero_to_one if auto_normalize else identity
 
     @property
-    def device(self):
+    def device(self): 
         return self.betas.device
 
     def predict_start_from_noise(self, x_t, t, noise):
@@ -738,7 +738,7 @@ class GaussianDiffusion(nn.Module):
         return img
 
     @autocast(enabled = False)
-    def q_sample(self, x_start, t, noise = None):
+    def q_sample(self, x_start, t, noise = None):       # 前向加噪过程
         noise = default(noise, lambda: torch.randn_like(x_start))
 
         return (
@@ -749,7 +749,7 @@ class GaussianDiffusion(nn.Module):
     def p_losses(self, x_start, t, noise = None, offset_noise_strength = None):
         b, c, h, w = x_start.shape
 
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        noise = default(noise, lambda: torch.randn_like(x_start))   # 与输入图片尺寸相同
 
         # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
 
@@ -761,7 +761,7 @@ class GaussianDiffusion(nn.Module):
 
         # noise sample
 
-        x = self.q_sample(x_start = x_start, t = t, noise = noise)
+        x = self.q_sample(x_start = x_start, t = t, noise = noise)      # 前向加噪
 
         # if doing self-conditioning, 50% of the time, predict x_start from current set of times
         # and condition with unet with that
@@ -910,7 +910,7 @@ class Trainer(object):
 
         # for logging results in a folder periodically
 
-        if self.accelerator.is_main_process:
+        if self.accelerator.is_main_process:    # EMA模型被用于对当前扩散模型的参数进行平滑处理，并用于后续的训练和测试过程中
             self.ema = EMA(diffusion_model, beta = ema_decay, update_every = ema_update_every)
             self.ema.to(self.device)
 
