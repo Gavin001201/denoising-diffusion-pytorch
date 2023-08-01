@@ -288,7 +288,7 @@ class Unet(nn.Module):
         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
 
         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]   # [64, 64*[1, 2, 4, 8]]
-        in_out = list(zip(dims[:-1], dims[1:]))
+        in_out = list(zip(dims[:-1], dims[1:]))     # [(64, 64), (64, 128), (128, 256), (256, 512)]
 
         block_klass = partial(ResnetBlock, groups = resnet_block_groups)
 
@@ -366,7 +366,7 @@ class Unet(nn.Module):
 
     @property
     def downsample_factor(self):
-        return 2 ** (len(self.downs) - 1)
+        return 2 ** (len(self.downs) - 1)   # self.downs包含三次下采样，因此图片的高宽需要能够被8整除
 
     def forward(self, x, time, x_self_cond = None):
         assert all([divisible_by(d, self.downsample_factor) for d in x.shape[-2:]]), f'your input dimensions {x.shape[-2:]} need to be divisible by {self.downsample_factor}, given the unet'
@@ -375,10 +375,10 @@ class Unet(nn.Module):
             x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
             x = torch.cat((x_self_cond, x), dim = 1)
 
-        x = self.init_conv(x)
+        x = self.init_conv(x)       # [32, 3, 128, 128]-->[32, 64, 128, 128]
         r = x.clone()
 
-        t = self.time_mlp(time)     # [8, 256]
+        t = self.time_mlp(time)     # [32, 256]
 
         h = []
 
@@ -415,7 +415,7 @@ class Unet(nn.Module):
 
 def extract(a, t, x_shape):     # 提取输入a的最后一维中索引为t处的值
     b, *_ = t.shape
-    out = a.gather(-1, t)
+    out = a.gather(-1, t)       # 从a中取出最后一维中指定位置t处的值
     return out.reshape(b, *((1,) * (len(x_shape) - 1)))
 
 def linear_beta_schedule(timesteps):
@@ -597,7 +597,7 @@ class GaussianDiffusion(nn.Module):
             extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape) * v
         )
 
-    def q_posterior(self, x_start, x_t, t):
+    def q_posterior(self, x_start, x_t, t):     # p(xt-1|xt, x0)
         posterior_mean = (
             extract(self.posterior_mean_coef1, t, x_t.shape) * x_start +
             extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
@@ -647,7 +647,7 @@ class GaussianDiffusion(nn.Module):
         batched_times = torch.full((b,), t, device = device, dtype = torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(x = x, t = batched_times, x_self_cond = x_self_cond, clip_denoised = True)
         noise = torch.randn_like(x) if t > 0 else 0. # no noise if t == 0
-        pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
+        pred_img = model_mean + (0.5 * model_log_variance).exp() * noise    # 单次前传
         return pred_img, x_start
 
     @torch.inference_mode()
@@ -753,7 +753,7 @@ class GaussianDiffusion(nn.Module):
 
         # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
 
-        offset_noise_strength = default(offset_noise_strength, self.offset_noise_strength)
+        offset_noise_strength = default(offset_noise_strength, self.offset_noise_strength)      # 0
 
         if offset_noise_strength > 0.:
             offset_noise = torch.randn(x_start.shape[:2], device = self.device)
@@ -796,9 +796,9 @@ class GaussianDiffusion(nn.Module):
     def forward(self, img, *args, **kwargs):
         b, c, h, w, device, img_size, = *img.shape, img.device, self.image_size
         assert h == img_size and w == img_size, f'height and width of image must be {img_size}'
-        t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
+        t = torch.randint(0, self.num_timesteps, (b,), device=device).long()    # [32]
 
-        img = self.normalize(img)
+        img = self.normalize(img)       # [-1, 1]
         return self.p_losses(img, t, *args, **kwargs)
 
 # dataset classes
@@ -833,6 +833,8 @@ class Dataset(Dataset):
     def __getitem__(self, index):
         path = self.paths[index]
         img = Image.open(path)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
         return self.transform(img)
 
 # trainer class
@@ -1002,7 +1004,7 @@ class Trainer(object):
 
                 total_loss = 0.
 
-                for _ in range(self.gradient_accumulate_every):
+                for _ in range(self.gradient_accumulate_every):     # 2 （超参）
                     data = next(self.dl).to(device)
 
                     with self.accelerator.autocast():
