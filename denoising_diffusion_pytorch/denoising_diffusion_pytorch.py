@@ -154,7 +154,7 @@ class Block(nn.Module):     # 卷积（只改变通道数）+ 归一化 + 激活
 
         if exists(scale_shift):
             scale, shift = scale_shift
-            x = x * (scale + 1) + shift
+            x = x * (scale + 1) + shift     # [32, 64, 64, 64]
 
         x = self.act(x)
         return x
@@ -174,10 +174,10 @@ class ResnetBlock(nn.Module):   # 残差块（dim --> dim_out）
     def forward(self, x, time_emb = None):
 
         scale_shift = None
-        if exists(self.mlp) and exists(time_emb):
-            time_emb = self.mlp(time_emb)
-            time_emb = rearrange(time_emb, 'b c -> b c 1 1')
-            scale_shift = time_emb.chunk(2, dim = 1)
+        if exists(self.mlp) and exists(time_emb):       # timb_emb:[32, 256]
+            time_emb = self.mlp(time_emb)               # [32, 128]
+            time_emb = rearrange(time_emb, 'b c -> b c 1 1')    # [32, 128, 1, 1]
+            scale_shift = time_emb.chunk(2, dim = 1)    # [32, 64, 1, 1], [3, 64, 1, 1]
 
         h = self.block1(x, scale_shift = scale_shift)
 
